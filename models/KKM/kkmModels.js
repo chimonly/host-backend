@@ -1,4 +1,3 @@
-// models/KKM/kkmModels.js
 import { DataTypes } from "sequelize";
 import db from "../../config/LOGIN/Database.js";
 import Evaluation from "../EVALUASI/EvaluasiModel.js";

@@ -1,8 +1,6 @@
-// models/MateriSkor/SkorModel.js
 import { DataTypes } from "sequelize";
 import db from "../../config/LOGIN/Database.js";
 import User from "../LOGIN/UserModel.js";
-import Evaluation from "../EVALUASI/EvaluasiModel.js";
 
 const Score = db.define(
   "scores",
@@ -18,14 +16,6 @@ const Score = db.define(
       references: {
         model: "users",
         key: "uuid",
-      },
-    },
-    evaluation_id: {
-      type: DataTypes.INTEGER,
-      allowNull: false,
-      references: {
-        model: "evaluations",
-        key: "id",
       },
     },
     type: {
@@ -59,7 +49,5 @@ const Score = db.define(
 
 User.hasMany(Score, { foreignKey: "user_id" });
 Score.belongsTo(User, { foreignKey: "user_id" });
-Evaluation.hasMany(Score, { foreignKey: "evaluation_id" });
-Score.belongsTo(Evaluation, { foreignKey: "evaluation_id" });
 
 export default Score;
