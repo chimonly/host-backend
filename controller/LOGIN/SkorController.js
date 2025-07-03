@@ -1,5 +1,8 @@
+// controller/LOGIN/SkorController.js
 import User from "../../models/LOGIN/UserModel.js";
 import Score from "../../models/MateriSkor/SkorModel.js";
+import Evaluation from "../../models/EVALUASI/EvaluasiModel.js";
+import Kkm from "../../models/KKM/kkmModels.js";
 import { promisify } from "util";
 import { exec } from "child_process";
 import fs from "fs/promises";
@@ -22,17 +25,42 @@ const getScores = async (req, res) => {
     }
     const scores = await Score.findAll({
       where: { user_id: req.session.userId },
-      attributes: ["type", "chapter", "score", "created_at"],
+      attributes: ["type", "chapter", "score", "evaluation_id", "created_at"],
+      include: [
+        {
+          model: Evaluation,
+          attributes: ["id"],
+          include: [
+            {
+              model: Kkm,
+              attributes: ["kkm"],
+            },
+          ],
+        },
+      ],
     });
+
+    const formattedScores = scores.map((score) => {
+      const kkm = score.Evaluation?.Kkm?.kkm || null;
+      const pass = kkm ? score.score >= kkm : false;
+      return {
+        type: score.type,
+        chapter: score.chapter,
+        score: score.score,
+        evaluation_id: score.evaluation_id,
+        kkm,
+        pass,
+        created_at: score.created_at,
+      };
+    });
+
     res.status(200).json({
       user,
-      scores,
+      scores: formattedScores,
     });
   } catch (error) {
     console.error("Error di getScores:", error.message);
-    res
-      .status(500)
-      .json({ msg: "Terjadi kesalahan pada server", error: error.message });
+    res.status(500).json({ msg: "Terjadi kesalahan pada server", error: error.message });
   }
 };
 
@@ -50,25 +78,47 @@ const getScoresByUserId = async (req, res) => {
     });
 
     if (!user) {
-      return res
-        .status(404)
-        .json({ msg: "User tidak ditemukan atau bukan siswa" });
+      return res.status(404).json({ msg: "User tidak ditemukan atau bukan siswa" });
     }
 
     const scores = await Score.findAll({
       where: { user_id },
-      attributes: ["type", "chapter", "score", "created_at"],
+      attributes: ["type", "chapter", "score", "evaluation_id", "created_at"],
+      include: [
+        {
+          model: Evaluation,
+          attributes: ["id"],
+          include: [
+            {
+              model: Kkm,
+              attributes: ["kkm"],
+            },
+          ],
+        },
+      ],
+    });
+
+    const formattedScores = scores.map((score) => {
+      const kkm = score.Evaluation?.Kkm?.kkm || null;
+      const pass = kkm ? score.score >= kkm : false;
+      return {
+        type: score.type,
+        chapter: score.chapter,
+        score: score.score,
+        evaluation_id: score.evaluation_id,
+        kkm,
+        pass,
+        created_at: score.created_at,
+      };
     });
 
     res.status(200).json({
       user,
-      scores,
+      scores: formattedScores,
     });
   } catch (error) {
     console.error("Error di getScoresByUserId:", error.message);
-    res
-      .status(500)
-      .json({ msg: "Terjadi kesalahan pada server", error: error.message });
+    res.status(500).json({ msg: "Terjadi kesalahan pada server", error: error.message });
   }
 };
 
@@ -81,32 +131,23 @@ const createScore = async (req, res) => {
     return res.status(400).json({ msg: "Request body tidak ditemukan" });
   }
 
-  const { user_id, type, chapter, score } = req.body;
+  const { user_id, type, chapter, score, evaluation_id } = req.body;
 
-  if (!user_id || !type || score === undefined) {
-    return res
-      .status(400)
-      .json({ msg: "user_id, type, dan score wajib diisi" });
+  if (!user_id || !type || score === undefined || !evaluation_id) {
+    return res.status(400).json({ msg: "user_id, type, score, dan evaluation_id wajib diisi" });
   }
 
   if (!["latihan", "evaluasi", "evaluasi_akhir"].includes(type)) {
-    return res
-      .status(400)
-      .json({ msg: "Type harus latihan, evaluasi, atau evaluasi_akhir" });
+    return res.status(400).json({ msg: "Type harus latihan, evaluasi, atau evaluasi_akhir" });
   }
 
-  if (
-    type !== "evaluasi_akhir" &&
-    (chapter < 1 || chapter > 6 || !Number.isInteger(chapter))
-  ) {
+  if (type !== "evaluasi_akhir" && (chapter < 1 || chapter > 6 || !Number.isInteger(chapter))) {
     return res.status(400).json({
       msg: "Chapter harus integer antara 1 dan 6 untuk latihan atau evaluasi",
     });
   }
   if (type === "evaluasi_akhir" && chapter !== undefined) {
-    return res
-      .status(400)
-      .json({ msg: "Evaluasi akhir tidak memerlukan chapter" });
+    return res.status(400).json({ msg: "Evaluasi akhir tidak memerlukan chapter" });
   }
 
   if (typeof score !== "number" || score < 0 || score > 100) {
@@ -122,18 +163,19 @@ const createScore = async (req, res) => {
   }
 
   if (loggedInUser.role === "user" && user_id !== req.session.userId) {
-    return res
-      .status(403)
-      .json({ msg: "Anda hanya dapat menambahkan skor untuk diri sendiri" });
+    return res.status(403).json({ msg: "Anda hanya dapat menambahkan skor untuk diri sendiri" });
   }
 
   const user = await User.findOne({
     where: { uuid: user_id, role: "user" },
   });
   if (!user) {
-    return res
-      .status(404)
-      .json({ msg: "User tidak ditemukan atau bukan siswa" });
+    return res.status(404).json({ msg: "User tidak ditemukan atau bukan siswa" });
+  }
+
+  const evaluation = await Evaluation.findOne({ where: { id: evaluation_id } });
+  if (!evaluation) {
+    return res.status(404).json({ msg: "Evaluasi tidak ditemukan" });
   }
 
   try {
@@ -142,13 +184,12 @@ const createScore = async (req, res) => {
       type,
       chapter: type === "evaluasi_akhir" ? null : chapter,
       score,
+      evaluation_id,
     });
     res.status(201).json({ msg: "Skor berhasil ditambahkan" });
   } catch (error) {
     console.error("Error di createScore:", error.message);
-    res
-      .status(500)
-      .json({ msg: "Terjadi kesalahan pada server", error: error.message });
+    res.status(500).json({ msg: "Terjadi kesalahan pada server", error: error.message });
   }
 };
 
@@ -175,13 +216,24 @@ const exportScoresToExcel = async (req, res) => {
       users.map(async (user) => {
         const scores = await Score.findAll({
           where: { user_id: user.uuid },
-          attributes: ["type", "chapter", "score"],
+          attributes: ["type", "chapter", "score", "evaluation_id"],
+          include: [
+            {
+              model: Evaluation,
+              attributes: ["id"],
+              include: [
+                {
+                  model: Kkm,
+                  attributes: ["kkm"],
+                },
+              ],
+            },
+          ],
         });
         return { ...user.toJSON(), scores };
       })
     );
 
-    // Menyiapkan data untuk Excel
     const data = usersWithScores.map((user) => {
       const getScore = (scores, type, chapter) => {
         const score = scores.find(
@@ -212,12 +264,10 @@ const exportScoresToExcel = async (req, res) => {
       };
     });
 
-    // Membuat workbook Excel
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Daftar Nilai");
 
-    // Mengatur lebar kolom
     ws["!cols"] = [
       { wch: 15 },
       { wch: 30 },
@@ -237,7 +287,6 @@ const exportScoresToExcel = async (req, res) => {
       { wch: 15 },
     ];
 
-    // Menghasilkan file Excel
     const excelBuffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
     res.setHeader(
       "Content-Type",
@@ -250,11 +299,10 @@ const exportScoresToExcel = async (req, res) => {
     res.send(excelBuffer);
   } catch (error) {
     console.error("Error di exportScoresToExcel:", error.message);
-    res
-      .status(500)
-      .json({ msg: "Terjadi kesalahan pada server", error: error.message });
+    res.status(500).json({ msg: "Terjadi kesalahan pada server", error: error.message });
   }
 };
+
 const exportScoresToJSON = async (req, res) => {
   if (!req.session.userId) {
     return res.status(401).json({ msg: "Mohon login ke akun anda" });
@@ -278,7 +326,19 @@ const exportScoresToJSON = async (req, res) => {
       users.map(async (user) => {
         const scores = await Score.findAll({
           where: { user_id: user.uuid },
-          attributes: ["type", "chapter", "score"],
+          attributes: ["type", "chapter", "score", "evaluation_id"],
+          include: [
+            {
+              model: Evaluation,
+              attributes: ["id"],
+              include: [
+                {
+                  model: Kkm,
+                  attributes: ["kkm"],
+                },
+              ],
+            },
+          ],
         });
         return { ...user.toJSON(), scores };
       })
@@ -287,9 +347,7 @@ const exportScoresToJSON = async (req, res) => {
     res.status(200).json(usersWithScores);
   } catch (error) {
     console.error("Error di exportScoresToJSON:", error.message);
-    res
-      .status(500)
-      .json({ msg: "Terjadi kesalahan pada server", error: error.message });
+    res.status(500).json({ msg: "Terjadi kesalahan pada server", error: error.message });
   }
 };
 
